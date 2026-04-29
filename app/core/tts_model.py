@@ -69,8 +69,10 @@ async def initialize_model():
             original_load = torch.load
             
             def force_cpu_torch_load(f, map_location=None, **kwargs):
-                # Always force CPU mapping during initial load for stability on CPU/MPS
-                return original_load(f, map_location='cpu', **kwargs)
+                # If map_location is explicitly provided (other than None), respect it.
+                # Otherwise, default to 'cpu' for stability on non-CUDA systems.
+                target_map = map_location if map_location is not None else 'cpu'
+                return original_load(f, map_location=target_map, **kwargs)
             
             torch.load = force_cpu_torch_load
             
@@ -103,6 +105,10 @@ async def initialize_model():
                         component = getattr(model, attr)
                         if hasattr(component, 'to'):
                             setattr(model, attr, component.to(target_device))
+                
+                # Clear MPS cache if needed as moving components can be memory intensive
+                if target_device == 'mps' and hasattr(torch, 'mps') and torch.mps.is_available():
+                    torch.mps.empty_cache()
                 
                 # Set the device attribute on the model
                 model.device = target_device
