@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from app.models import TTSRequest, ErrorResponse, SSEAudioDelta, SSEAudioDone, SSEUsageInfo, SSEAudioInfo
 from app.config import Config
 from app.core import (
-    get_memory_info, cleanup_memory, safe_delete_tensors,
+    get_memory_info, cleanup_memory, empty_gpu_cache, safe_delete_tensors,
     split_text_into_chunks, concatenate_audio_chunks, add_route_aliases,
     TTSStatus, start_tts_request, update_tts_status, get_voice_library
 )
@@ -185,6 +185,8 @@ async def generate_speech_internal(
         print(f"📊 Request #{REQUEST_COUNTER} - Initial memory: CPU {initial_memory['cpu_memory_mb']:.1f}MB", end="")
         if torch.cuda.is_available():
             print(f", GPU {initial_memory['gpu_memory_allocated_mb']:.1f}MB allocated")
+        elif initial_memory.get('mps_available'):
+            print(f", MPS active")
         else:
             print()
     
@@ -269,8 +271,7 @@ async def generate_speech_internal(
             if i > 0 and i % 3 == 0:  # Every 3 chunks
                 import gc
                 gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                empty_gpu_cache()
         
         # Concatenate all chunks with memory management
         if len(audio_chunks) > 1:
@@ -340,6 +341,8 @@ async def generate_speech_internal(
                 print(f"📊 Request #{REQUEST_COUNTER} - Final memory: CPU {final_memory['cpu_memory_mb']:.1f}MB", end="")
                 if torch.cuda.is_available():
                     print(f", GPU {final_memory['gpu_memory_allocated_mb']:.1f}MB allocated")
+                elif final_memory.get('mps_available'):
+                    print(f", MPS active")
                 else:
                     print()
                 
@@ -350,6 +353,8 @@ async def generate_speech_internal(
                     if torch.cuda.is_available():
                         gpu_diff = final_memory['gpu_memory_allocated_mb'] - initial_memory['gpu_memory_allocated_mb']
                         print(f", GPU {gpu_diff:+.1f}MB")
+                    elif final_memory.get('mps_available'):
+                        print(f", MPS active")
                     else:
                         print()
             
@@ -408,6 +413,8 @@ async def generate_speech_streaming(
         print(f"📊 Streaming Request #{REQUEST_COUNTER} - Initial memory: CPU {initial_memory['cpu_memory_mb']:.1f}MB", end="")
         if torch.cuda.is_available():
             print(f", GPU {initial_memory['gpu_memory_allocated_mb']:.1f}MB allocated")
+        elif initial_memory.get('mps_available'):
+            print(f", MPS active")
         else:
             print()
     
@@ -519,8 +526,7 @@ async def generate_speech_streaming(
             if i > 0 and i % 3 == 0:  # Every 3 chunks
                 import gc
                 gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                empty_gpu_cache()
         
         # Mark as completed
         update_tts_status(request_id, TTSStatus.COMPLETED, "Streaming audio generation completed")
@@ -607,6 +613,8 @@ async def generate_speech_sse(
         print(f"📊 SSE Request #{REQUEST_COUNTER} - Initial memory: CPU {initial_memory['cpu_memory_mb']:.1f}MB", end="")
         if torch.cuda.is_available():
             print(f", GPU {initial_memory['gpu_memory_allocated_mb']:.1f}MB allocated")
+        elif initial_memory.get('mps_available'):
+            print(f", MPS active")
         else:
             print()
     
@@ -728,8 +736,7 @@ async def generate_speech_sse(
             if i > 0 and i % 3 == 0:  # Every 3 chunks
                 import gc
                 gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
+                empty_gpu_cache()
         
         # Send completion event
         total_output_tokens = total_audio_chunks * 50  # Rough estimate

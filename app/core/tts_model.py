@@ -4,6 +4,7 @@ TTS model initialization and management
 
 import os
 import asyncio
+import torch
 from enum import Enum
 from typing import Optional, Dict, Any
 from chatterbox.tts import ChatterboxTTS
@@ -19,6 +20,13 @@ _initialization_error = None
 _initialization_progress = ""
 _is_multilingual = None
 _supported_languages = {}
+
+# Try to import safetensors
+try:
+    import safetensors.torch
+    HAS_SAFETENSORS = True
+except ImportError:
+    HAS_SAFETENSORS = False
 
 
 class InitializationState(Enum):
@@ -54,29 +62,23 @@ async def initialize_model():
             raise FileNotFoundError(f"Voice sample not found: {Config.VOICE_SAMPLE_PATH}")
         
         _initialization_progress = "Configuring device compatibility..."
-        # Patch torch.load for CPU compatibility if needed
-        if _device == 'cpu':
-            import torch
+        # Patch torch.load for CPU/MPS compatibility
+        # Chatterbox models are often saved with CUDA references which fail on non-CUDA systems
+        if _device != 'cuda':
+            print(f"Applying torch.load patch for {_device} compatibility...")
             original_load = torch.load
-            original_load_file = None
-            
-            # Try to patch safetensors if available
-            try:
-                import safetensors.torch
-                original_load_file = safetensors.torch.load_file
-            except ImportError:
-                pass
             
             def force_cpu_torch_load(f, map_location=None, **kwargs):
-                # Always force CPU mapping if we're on a CPU device
+                # Always force CPU mapping during initial load for stability on CPU/MPS
                 return original_load(f, map_location='cpu', **kwargs)
             
-            def force_cpu_load_file(filename, device=None):
-                # Force CPU for safetensors loading too
-                return original_load_file(filename, device='cpu')
-            
             torch.load = force_cpu_torch_load
-            if original_load_file:
+            
+            # Also patch safetensors if available
+            if HAS_SAFETENSORS:
+                original_load_file = safetensors.torch.load_file
+                def force_cpu_load_file(filename, device=None):
+                    return original_load_file(filename, device='cpu')
                 safetensors.torch.load_file = force_cpu_load_file
         
         # Determine if we should use multilingual model
@@ -86,11 +88,32 @@ async def initialize_model():
         # Initialize model with run_in_executor for non-blocking
         loop = asyncio.get_event_loop()
         
+        def load_and_move_model(model_class, target_device):
+            """Load model to CPU first, then move to target device for stability"""
+            print(f"Loading {model_class.__name__} (CPU first)...")
+            # We load to 'cpu' because our patch already forces cpu, 
+            # but being explicit is better for clarity and future changes.
+            model = model_class.from_pretrained(device='cpu')
+            
+            if target_device != 'cpu':
+                print(f"Moving model components to {target_device}...")
+                # chatterbox models usually have these components
+                for attr in ['t3', 's3gen', 've']:
+                    if hasattr(model, attr):
+                        component = getattr(model, attr)
+                        if hasattr(component, 'to'):
+                            setattr(model, attr, component.to(target_device))
+                
+                # Set the device attribute on the model
+                model.device = target_device
+            
+            return model
+
         if use_multilingual:
             print(f"Loading Chatterbox Multilingual TTS model...")
             _model = await loop.run_in_executor(
                 None, 
-                lambda: ChatterboxMultilingualTTS.from_pretrained(device=_device)
+                lambda: load_and_move_model(ChatterboxMultilingualTTS, _device)
             )
             _is_multilingual = True
             _supported_languages = SUPPORTED_LANGUAGES.copy()
@@ -99,7 +122,7 @@ async def initialize_model():
             print(f"Loading standard Chatterbox TTS model...")
             _model = await loop.run_in_executor(
                 None, 
-                lambda: ChatterboxTTS.from_pretrained(device=_device)
+                lambda: load_and_move_model(ChatterboxTTS, _device)
             )
             _is_multilingual = False
             _supported_languages = {"en": "English"}  # Standard model only supports English
