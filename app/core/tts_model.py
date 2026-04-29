@@ -9,6 +9,17 @@ from enum import Enum
 from typing import Optional, Dict, Any
 from chatterbox.tts import ChatterboxTTS
 from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+import perth
+
+# Patch resemble-perth if it's broken (common on some platforms/Python versions)
+if not getattr(perth, "PerthImplicitWatermarker", None):
+    print("⚠️  PerthImplicitWatermarker not found or broken. Applying mock to prevent crash.")
+    class MockWatermarker:
+        def __init__(self, *args, **kwargs): pass
+        def encode(self, audio, *args, **kwargs): return audio
+        def decode(self, audio, *args, **kwargs): return None
+    perth.PerthImplicitWatermarker = MockWatermarker
+
 from app.core.mtl import SUPPORTED_LANGUAGES
 from app.config import Config, detect_device
 
