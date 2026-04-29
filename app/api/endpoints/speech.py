@@ -22,6 +22,7 @@ from app.core import (
     split_text_into_chunks, concatenate_audio_chunks, add_route_aliases,
     TTSStatus, start_tts_request, update_tts_status, get_voice_library
 )
+from app.core.mtl import SUPPORTED_LANGUAGES
 from app.core.tts_model import get_model, is_multilingual
 from app.core.text_processing import split_text_for_streaming, get_streaming_settings
 
@@ -79,6 +80,13 @@ def resolve_voice_path_and_language(voice_name: Optional[str]) -> tuple[str, str
     voice_language = voice_lib.get_voice_language(voice_name)
     
     if voice_path is None:
+        # Check if the "voice" is actually a language code (e.g., "it", "fr", "es")
+        # If it is, use the default voice with that language
+        lang_code = voice_name.lower()
+        if lang_code in SUPPORTED_LANGUAGES:
+            print(f"🌐 Recognized language code '{lang_code}', using default voice with {SUPPORTED_LANGUAGES[lang_code]} pronunciation")
+            return Config.VOICE_SAMPLE_PATH, lang_code
+
         # Check if it's an OpenAI voice name without an alias mapping
         openai_voices = {"alloy", "echo", "fable", "onyx", "nova", "shimmer"}
         if voice_name.lower() in openai_voices:
